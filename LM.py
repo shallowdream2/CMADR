@@ -95,40 +95,40 @@ def train_cmadr(env, mac, num_episodes=500, gamma=0.98, cost_limits=None, device
             advantage = td_target[:-1] - values[:-1]
 
             # 1. 全局价值、全局cost优势
-        global_values = mac.global_critic(global_obs_batch).squeeze(-1) # [T]
-        global_cost = cost_energy_batch.mean(dim=1)  # [T]
-        global_cost_to_go = []
-        running = 0
-        for t in reversed(range(len(global_cost))):
-            running = global_cost[t] + gamma * running * (1 - done_batch[t])
-            global_cost_to_go.insert(0, running)
-        global_cost_to_go = torch.tensor(global_cost_to_go, dtype=torch.float32, device=device)
-        global_cost_advantage = global_cost_to_go - global_values
+            global_values = mac.global_critic(global_obs_batch).squeeze(-1) # [T]
+            global_cost = cost_energy_batch.mean(dim=1)  # [T]
+            global_cost_to_go = []
+            running = 0
+            for t in reversed(range(len(global_cost))):
+                running = global_cost[t] + gamma * running * (1 - done_batch[t])
+                global_cost_to_go.insert(0, running)
+            global_cost_to_go = torch.tensor(global_cost_to_go, dtype=torch.float32, device=device)
+            global_cost_advantage = global_cost_to_go - global_values
 
-        # 2. 本地actor/critic损失
-        logits = agent(obs_agent[:-1])
-        logp = torch.log(logits.gather(1, act_agent[:-1].unsqueeze(-1)).squeeze(-1) + 1e-8)
-        actor_loss = -torch.mean(logp * advantage.detach())
-        critic_loss = F.mse_loss(values[:-1], td_target[:-1].detach())
+            # 2. 本地actor/critic损失
+            logits = agent(obs_agent[:-1])
+            logp = torch.log(logits.gather(1, act_agent[:-1].unsqueeze(-1)).squeeze(-1) + 1e-8)
+            actor_loss = -torch.mean(logp * advantage.detach())
+            critic_loss = F.mse_loss(values[:-1], td_target[:-1].detach())
 
-        # 3. 全局critic损失
-        global_critic_loss = F.mse_loss(global_values[:-1], global_cost_to_go[:-1].detach())
+            # 3. 全局critic损失
+            global_critic_loss = F.mse_loss(global_values[:-1], global_cost_to_go[:-1].detach())
 
-        # 4. Lagrange约束项（对全局cost优势）
-        lagrange_loss_term = lagrange_energy() * global_cost_advantage[:-1].mean()
+            # 4. Lagrange约束项（对全局cost优势）
+            lagrange_loss_term = lagrange_energy() * global_cost_advantage[:-1].mean()
 
-        # 5. 总损失
-        total_loss = actor_loss + critic_loss + global_critic_loss + lagrange_loss_term
+            # 5. 总损失
+            total_loss = actor_loss + critic_loss + global_critic_loss + lagrange_loss_term
 
-        optimizer_a.zero_grad()
-        optimizer_c.zero_grad()
-        mac.optim_global_critic.zero_grad()
-        total_loss.backward()
-        optimizer_a.step()
-        optimizer_c.step()
-        mac.optim_global_critic.step()
+            optimizer_a.zero_grad()
+            optimizer_c.zero_grad()
+            mac.optim_global_critic.zero_grad()
+            total_loss.backward()
+            optimizer_a.step()
+            optimizer_c.step()
+            mac.optim_global_critic.step()
 
-        lagrange_energy.update(global_cost_advantage[:-1].mean())
+            lagrange_energy.update(global_cost_advantage[:-1].mean())
 
 
         # 4. 全局网络（可选：辅助优化/target value）
