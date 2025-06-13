@@ -10,9 +10,12 @@ class ISTNEnv:
         self.max_time = max_time
         self.random = random.Random(seed)
         self.n_agents = num_satellites + num_ground_stations
-        self.neighbors = self._build_neighbors()
-        self.obs_dim = 3 # 每个agent的观测维度：能量、缓冲区、延迟
-        self.action_dim = num_satellites + num_ground_stations # 每个agent可以选择的动作数：转发给哪个邻居
+        # 邻接表在每个time slot动态传入
+        self.neighbors = None
+        # 每个agent本地状态维度
+        self.obs_dim = 3
+        # 动作维度在动态拓扑下等于邻居数量，这里给出可能的上界
+        self.action_dim = num_satellites + num_ground_stations
         self.reset()
 
     def _build_neighbors(self):
@@ -49,22 +52,42 @@ class ISTNEnv:
             }
         return ground_stations
 
-    def get_obs(self):
-        # 返回全体观测，可以根据需求定义为 list 或 dict
-        obs = []
-        # 卫星观测
-        for i in range(self.num_satellites):
-            own = self.satellites[i]
-            # 可拼接邻居状态，现简化为本地
-            obs.append([own['energy'], own['buffer'], own['latency']])
-        # 地面站观测
-        for i in range(self.num_ground_stations):
-            own = self.ground_stations[i]
-            obs.append([own['energy'], own['buffer'],own['latency']])
-        return np.array(obs, dtype=np.float32)
+    def get_obs(self, neighbors):
+        """Return observations for all agents.
 
-    def step(self, actions):
-        """ actions: list of len n_agents, actions[i]为第i个agent要把一个包转发给哪个邻居index """
+        Each agent observes its own state concatenated with the state of its
+        current neighbors.
+        """
+        obs = []
+        for i in range(self.n_agents):
+            if i < self.num_satellites:
+                own = self.satellites[i]
+            else:
+                own = self.ground_stations[i - self.num_satellites]
+
+            state = [own['energy'], own['buffer'], own['latency']]
+            for nb in neighbors.get(i, []):
+                if nb < self.num_satellites:
+                    nb_node = self.satellites[nb]
+                else:
+                    nb_node = self.ground_stations[nb - self.num_satellites]
+                state.extend([nb_node['energy'], nb_node['buffer'], nb_node['latency']])
+            obs.append(np.array(state, dtype=np.float32))
+
+        return obs
+
+    def step(self, actions, neighbors):
+        """One environment step.
+
+        Parameters
+        ----------
+        actions : list
+            length ``n_agents``. ``actions[i]`` is the chosen neighbor index for
+            agent ``i``.
+        neighbors : dict
+            Mapping from agent index to a list of its current neighbors.
+        """
+        self.neighbors = neighbors
         cost_energy = np.zeros(self.n_agents)
         cost_loss = 0
         rewards = np.zeros(self.n_agents)
@@ -75,16 +98,16 @@ class ISTNEnv:
                 node = self.satellites[idx]
             else:
                 node = self.ground_stations[idx - self.num_satellites]
-            
+
             if node['buffer'] > 0:
                 # 检查动作是否有效（在邻居范围内）
-                if action >= len(self.neighbors[idx]):
+                if idx not in neighbors or action >= len(neighbors[idx]):
                     # 动作无效，直接跳过或给予惩罚
                     rewards[idx] -= 0.5  # 无效动作惩罚
                     continue
-                    
+
                 # 目标必须是邻居
-                target = self.neighbors[idx][action]
+                target = neighbors[idx][action]
                 # 目标节点
                 if target < self.num_satellites:
                     tgt_node = self.satellites[target]
@@ -106,7 +129,7 @@ class ISTNEnv:
                 cost_energy[idx] += 0.01
         self.time_slot += 1
         done = self.time_slot >= self.max_time
-        obs = self.get_obs()
+        obs = self.get_obs(neighbors)
         info = {}
         costs = {'energy': cost_energy, 'loss': cost_loss}
         return obs, rewards, done, costs, info
@@ -115,7 +138,9 @@ class ISTNEnv:
         self.satellites = self.initialize_satellites()
         self.ground_stations = self.initialize_ground_stations()
         self.time_slot = 0
-        return self.get_obs()
+        # 初始拓扑随机生成一次
+        self.neighbors = self._build_neighbors()
+        return self.get_obs(self.neighbors)
 
 # 测试代码
 if __name__ == '__main__':
@@ -123,8 +148,10 @@ if __name__ == '__main__':
     obs = env.reset()
     print("init_obs:", obs)
     for step in range(5):
-        actions = [env.random.choice(range(len(env.neighbors[i]))) for i in range(env.n_agents)]
-        obs, rewards, done, costs, info = env.step(actions)
+        # 动态生成邻接关系
+        neighbors = env._build_neighbors()
+        actions = [env.random.choice(range(len(neighbors[i]))) for i in range(env.n_agents)]
+        obs, rewards, done, costs, info = env.step(actions, neighbors)
         print(f"step={step+1}, obs={obs}, rewards={rewards}, costs={costs}")
         if done:
             break
