@@ -2,7 +2,14 @@ import numpy as np
 import random
 
 class ISTNEnv:
-    def __init__(self, num_satellites, num_ground_stations, max_buffer=10, max_energy=1.0, max_time=100, seed=0):
+    def __init__(self, num_satellites, num_ground_stations, max_buffer=10, max_energy=1.0,
+                 max_time=100, seed=0, sat_positions=None, gs_positions=None, queries=None):
+        """ISTN 环境
+
+        当 ``sat_positions`` 或 ``gs_positions`` 提供时，将使用给定的位置数据，否
+        则随机生成。 ``queries`` 用于在 ``reset`` 时初始化地面站 buffer，方便在训
+        练和预测阶段保持一致的数据输入。
+        """
         self.num_satellites = num_satellites
         self.num_ground_stations = num_ground_stations
         self.max_buffer = max_buffer
@@ -11,10 +18,17 @@ class ISTNEnv:
         self.random = random.Random(seed)
         self.n_agents = num_satellites + num_ground_stations
 
-        # ==== 位置坐标初始化 ====
-        # 卫星、地面站随机二维坐标，真实可用轨道参数
-        self.sat_positions = [np.array([random.uniform(0,100), random.uniform(0,100)]) for _ in range(self.num_satellites)]
-        self.gs_positions = [np.array([random.uniform(0,100), random.uniform(0,100)]) for _ in range(self.num_ground_stations)]
+        self.sat_positions = sat_positions or [
+            np.array([random.uniform(0, 100), random.uniform(0, 100)])
+            for _ in range(self.num_satellites)
+        ]
+        self.gs_positions = gs_positions or [
+            np.array([random.uniform(0, 100), random.uniform(0, 100)])
+            for _ in range(self.num_ground_stations)
+        ]
+
+        self.queries = queries or []
+        self.query_index = 0
 
         # 邻接表在每个time slot动态传入
         self.neighbors = None
@@ -61,6 +75,16 @@ class ISTNEnv:
         while dst == src:
             dst = self.random.randint(0, self.num_ground_stations - 1)
         return {'dst': dst, 'hop': 0, 'src': src, 'path': [], 'start_time': self.time_slot}
+
+    def _create_packet_from_query(self, src, dst):
+        """根据给定的查询生成数据包"""
+        return {
+            'dst': dst,
+            'hop': 0,
+            'src': src,
+            'path': [],
+            'start_time': self.time_slot,
+        }
 
     def get_obs(self, neighbors):
         """
@@ -229,8 +253,8 @@ class ISTNEnv:
         self.time_slot += 1
         done = self.time_slot >= self.max_time
 
-        # 每隔3步补充新的包（模拟有流量）
-        if self.time_slot % 3 == 0:
+        # 每隔3步补充新的包（模拟有流量），若提供 queries 则不再随机生成
+        if not self.queries and self.time_slot % 3 == 0:
             for _ in range(self.random.randint(1, self.num_ground_stations)):
                 gs_idx = self.random.randint(0, self.num_ground_stations - 1)
                 gs = self.ground_stations[gs_idx]
@@ -242,7 +266,8 @@ class ISTNEnv:
         info = {
             'delivered_packets': len(delivered_packets),
             'packets_in_transit': len(transit_packets),
-            'total_cost_loss': cost_loss
+            'total_cost_loss': cost_loss,
+            'delays': [self.time_slot - pkt['start_time'] for pkt in delivered_packets],
         }
         costs = {'energy': cost_energy, 'loss': cost_loss}
         
@@ -257,15 +282,23 @@ class ISTNEnv:
         self.time_slot = 0
         self.neighbors = self._build_neighbors()
         
-        # 初始化buffer：每个地面站生成一个包
+        # 初始化buffer：若提供查询则全部加入，否则每个地面站生成一个包
         total_initial_packets = 0
-        for i in range(self.num_ground_stations):
-            pkt = self._create_packet()
-            self.ground_stations[i]['buffer'].append(pkt)
-            total_initial_packets += 1
-            
+        if self.queries:
+            for q in self.queries:
+                pkt = self._create_packet_from_query(q['src'], q['dst'])
+                gs = self.ground_stations[q['src']]
+                if len(gs['buffer']) < self.max_buffer:
+                    gs['buffer'].append(pkt)
+                    total_initial_packets += 1
+        else:
+            for i in range(self.num_ground_stations):
+                pkt = self._create_packet()
+                self.ground_stations[i]['buffer'].append(pkt)
+                total_initial_packets += 1
+
         print(f"Reset: Created {total_initial_packets} initial packets")
-        
+
         # 打印初始buffer状态
         for i in range(self.num_ground_stations):
             buffer_size = len(self.ground_stations[i]['buffer'])

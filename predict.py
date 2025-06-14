@@ -1,0 +1,58 @@
+import json
+from ISTN_ENV import ISTNEnv
+from MASys import MultiAgentSystem
+from LM import train_cmadr
+
+
+def load_data(path: str):
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def evaluate(env: ISTNEnv, mac: MultiAgentSystem):
+    obs = env.reset()
+    done = False
+    total_loss = 0
+    delivered = 0
+    total_delay = 0
+    while not done:
+        neighbors = env._build_neighbors()
+        actions = mac.select_actions(obs, neighbors)
+        obs, reward, done, costs, info = env.step(actions, neighbors)
+        total_loss += costs['loss']
+        delivered += info['delivered_packets']
+        total_delay += sum(info['delays'])
+    loss_rate = total_loss / (delivered + total_loss) if delivered + total_loss > 0 else 0
+    avg_delay = total_delay / delivered if delivered > 0 else 0
+    return loss_rate, avg_delay
+
+
+def train_and_predict(data_path: str):
+    data = load_data(data_path)
+    env = ISTNEnv(
+        num_satellites=len(data['sat_positions']),
+        num_ground_stations=len(data['gs_positions']),
+        max_time=50,
+        sat_positions=[tuple(p) for p in data['sat_positions']],
+        gs_positions=[tuple(p) for p in data['gs_positions']],
+        queries=data['queries'],
+    )
+    mac = MultiAgentSystem(
+        n_agents=env.num_satellites + env.num_ground_stations,
+        n_nodes=env.num_satellites + env.num_ground_stations,
+        obs_dim=env.obs_dim,
+        action_dim=env.action_dim,
+        hidden_dim=64,
+        device='cpu',
+    )
+
+    # 训练
+    train_cmadr(env, mac, num_episodes=10, gamma=0.98, cost_limits={'energy': 0.5, 'loss': 5}, device='cpu')
+
+    # 预测评估
+    loss_rate, avg_delay = evaluate(env, mac)
+    print(f"Prediction result: loss_rate={loss_rate:.3f}, avg_delay={avg_delay:.3f}")
+
+
+if __name__ == "__main__":
+    train_and_predict('data/prediction_data.json')
