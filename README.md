@@ -10,7 +10,10 @@ Paper: [Dynamic Routing for Integrated Satellite-Terrestrial Networks: A Constra
    python train.py --config config.json
    ```
 
-   The trained weights will be stored in the directory specified by `model_dir` in `config.json`.
+   The dataset name is given by `data_name` and the model will be saved to
+   `model/<round>_<data_name>`. Training parameters such as the number of
+   satellites, ground stations, queries and the maximum time slot are configured
+   in `config.json`.
 
 2. **Predict**
 
