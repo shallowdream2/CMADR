@@ -1,10 +1,19 @@
 {
-  "data_path": "data/prediction_data.json",
-  "model_dir": "model",
+  "data_dir": "data",
+  "data_name": "prediction_data",
+  "model_root": "model",
+  "round": 1,
   "device": "cpu",
   "train": {
     "num_episodes": 10,
     "gamma": 0.98,
-    "cost_limits": {"energy": 0.5, "loss": 5}
+    "cost_limits": {"energy": 0.5, "loss": 5},
+    "num_satellites": 5,
+    "num_ground_stations": 5,
+    "num_queries": 10,
+    "max_time": 50
+  },
+  "predict": {
+    "max_time": 50
   }
 }

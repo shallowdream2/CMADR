@@ -46,8 +46,9 @@ class ISTNEnv:
 
         self.conn_threshold = conn_threshold
 
-        self.queries = queries or []
-        self.query_index = 0
+        # sort queries by time slot; each query should have {'src','dst','time'}
+        self.queries = sorted(queries or [], key=lambda q: q.get('time', 0))
+        self.query_index = 0  # pointer to next query to release
 
         # 邻接表在每个time slot动态传入
         self.neighbors = None
@@ -119,6 +120,17 @@ class ISTNEnv:
             'path': [],
             'start_time': self.time_slot,
         }
+
+    def _release_queries(self):
+        """Release queries scheduled for the current time slot."""
+        while self.query_index < len(self.queries) and \
+                self.queries[self.query_index].get('time', 0) == self.time_slot:
+            q = self.queries[self.query_index]
+            gs = self.ground_stations[q['src']]
+            if len(gs['buffer']) < self.max_buffer:
+                pkt = self._create_packet_from_query(q['src'], q['dst'])
+                gs['buffer'].append(pkt)
+            self.query_index += 1
 
     def get_obs(self, neighbors):
         """
@@ -286,6 +298,9 @@ class ISTNEnv:
 
         self.time_slot += 1
 
+        # release queries scheduled for the new time slot
+        self._release_queries()
+
         # update satellite positions for next slot if provided
         if self.sat_positions_per_slot is not None:
             idx = min(self.time_slot, len(self.sat_positions_per_slot) - 1)
@@ -320,34 +335,18 @@ class ISTNEnv:
         self.satellites = self.initialize_satellites()
         self.ground_stations = self.initialize_ground_stations()
         self.time_slot = 0
+        self.query_index = 0
 
         if self.sat_positions_per_slot is not None:
             self.sat_positions = [np.array(p) for p in self.sat_positions_per_slot[0]]
 
         self.neighbors = self._build_neighbors()
         
-        # 初始化buffer：若提供查询则全部加入，否则每个地面站生成一个包
-        total_initial_packets = 0
-        if self.queries:
-            for q in self.queries:
-                pkt = self._create_packet_from_query(q['src'], q['dst'])
-                gs = self.ground_stations[q['src']]
-                if len(gs['buffer']) < self.max_buffer:
-                    gs['buffer'].append(pkt)
-                    total_initial_packets += 1
-        else:
+        # 初始化buffer：根据当前time_slot释放查询或随机生成
+        self._release_queries()
+        if not self.queries:
             for i in range(self.num_ground_stations):
                 pkt = self._create_packet()
                 self.ground_stations[i]['buffer'].append(pkt)
-                total_initial_packets += 1
 
-        print(f"Reset: Created {total_initial_packets} initial packets")
-
-        # 打印初始buffer状态
-        for i in range(self.num_ground_stations):
-            buffer_size = len(self.ground_stations[i]['buffer'])
-            if buffer_size > 0:
-                pkt = self.ground_stations[i]['buffer'][0]
-                print(f"  GS {i}: {buffer_size} packets, first packet dst={pkt['dst']}")
-        
         return self.get_obs(self.neighbors)

@@ -41,7 +41,10 @@ def generate_dataset(
         dst = random.randint(0, num_ground - 1)
         while dst == src:
             dst = random.randint(0, num_ground - 1)
-        dataset["queries"].append({"src": src, "dst": dst})
+        time_slot = random.randint(0, num_slots - 1)
+        dataset["queries"].append({"src": src, "dst": dst, "time": time_slot})
+
+    dataset["queries"].sort(key=lambda q: q["time"])
 
     return dataset
 

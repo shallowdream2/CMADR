@@ -1,5 +1,6 @@
 import json
 import argparse
+import os
 import numpy as np
 from ISTN_ENV import ISTNEnv
 from MASys import MultiAgentSystem
@@ -37,11 +38,14 @@ def evaluate(env: ISTNEnv, mac: MultiAgentSystem):
 
 def predict(config_path: str):
     cfg = load_config(config_path)
-    data = load_data(cfg['data_path'])
+    data_dir = cfg.get('data_dir', 'data')
+    data_name = cfg.get('data_name', 'dataset')
+    data_path = os.path.join(data_dir, f"{data_name}.json")
+    data = load_data(data_path)
     env = ISTNEnv(
         num_satellites=len(data['sat_positions_per_slot'][0]),
         num_ground_stations=len(data['gs_positions']),
-        max_time=len(data['sat_positions_per_slot']),
+        max_time=cfg.get('predict', {}).get('max_time', len(data['sat_positions_per_slot'])),
         sat_positions_per_slot=data['sat_positions_per_slot'],
         gs_positions=[tuple(p) for p in data['gs_positions']],
         queries=data['queries'],
@@ -55,7 +59,8 @@ def predict(config_path: str):
         device=cfg.get('device', 'cpu'),
     )
 
-    mac.load(cfg['model_dir'])
+    model_dir = os.path.join(cfg.get('model_root', 'model'), f"{cfg.get('round',1)}_{data_name}")
+    mac.load(model_dir)
     loss_rate, energy, avg_delay = evaluate(env, mac)
     print(
         f"Prediction result: loss_rate={loss_rate:.3f}, energy={energy:.3f}, avg_delay={avg_delay:.3f}"
