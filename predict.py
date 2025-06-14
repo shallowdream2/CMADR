@@ -1,11 +1,16 @@
 import json
+import argparse
 import numpy as np
 from ISTN_ENV import ISTNEnv
 from MASys import MultiAgentSystem
-from LM import train_cmadr
 
 
-def load_data(path: str):
+def load_config(path: str) -> dict:
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def load_data(path: str) -> dict:
     with open(path, 'r') as f:
         return json.load(f)
 
@@ -30,8 +35,9 @@ def evaluate(env: ISTNEnv, mac: MultiAgentSystem):
     return loss_rate, total_energy, avg_delay
 
 
-def train_and_predict(data_path: str):
-    data = load_data(data_path)
+def predict(config_path: str):
+    cfg = load_config(config_path)
+    data = load_data(cfg['data_path'])
     env = ISTNEnv(
         num_satellites=len(data['sat_positions_per_slot'][0]),
         num_ground_stations=len(data['gs_positions']),
@@ -46,13 +52,10 @@ def train_and_predict(data_path: str):
         obs_dim=env.obs_dim,
         action_dim=env.action_dim,
         hidden_dim=64,
-        device='cpu',
+        device=cfg.get('device', 'cpu'),
     )
 
-    # 训练
-    train_cmadr(env, mac, num_episodes=10, gamma=0.98, cost_limits={'energy': 0.5, 'loss': 5}, device='cpu')
-
-    # 预测评估
+    mac.load(cfg['model_dir'])
     loss_rate, energy, avg_delay = evaluate(env, mac)
     print(
         f"Prediction result: loss_rate={loss_rate:.3f}, energy={energy:.3f}, avg_delay={avg_delay:.3f}"
@@ -60,4 +63,7 @@ def train_and_predict(data_path: str):
 
 
 if __name__ == "__main__":
-    train_and_predict('data/prediction_data.json')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', default='config.json', help='Path to config file')
+    args = parser.parse_args()
+    predict(args.config)

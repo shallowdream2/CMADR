@@ -1,0 +1,10 @@
+{
+  "data_path": "data/prediction_data.json",
+  "model_dir": "model",
+  "device": "cpu",
+  "train": {
+    "num_episodes": 10,
+    "gamma": 0.98,
+    "cost_limits": {"energy": 0.5, "loss": 5}
+  }
+}
