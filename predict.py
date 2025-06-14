@@ -2,12 +2,27 @@ import json
 import numpy as np
 from ISTN_ENV import ISTNEnv
 from MASys import MultiAgentSystem
-from LM import train_cmadr
 
 
-def load_data(path: str):
+def load_config(path: str) -> dict:
     with open(path, 'r') as f:
         return json.load(f)
+
+
+def load_data(path: str) -> dict:
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def build_env(data: dict) -> ISTNEnv:
+    return ISTNEnv(
+        num_satellites=len(data['sat_positions_per_slot'][0]),
+        num_ground_stations=len(data['gs_positions']),
+        max_time=len(data['sat_positions_per_slot']),
+        sat_positions_per_slot=data['sat_positions_per_slot'],
+        gs_positions=[tuple(p) for p in data['gs_positions']],
+        queries=data['queries'],
+    )
 
 
 def evaluate(env: ISTNEnv, mac: MultiAgentSystem):
@@ -30,29 +45,20 @@ def evaluate(env: ISTNEnv, mac: MultiAgentSystem):
     return loss_rate, total_energy, avg_delay
 
 
-def train_and_predict(data_path: str):
-    data = load_data(data_path)
-    env = ISTNEnv(
-        num_satellites=len(data['sat_positions_per_slot'][0]),
-        num_ground_stations=len(data['gs_positions']),
-        max_time=len(data['sat_positions_per_slot']),
-        sat_positions_per_slot=data['sat_positions_per_slot'],
-        gs_positions=[tuple(p) for p in data['gs_positions']],
-        queries=data['queries'],
-    )
+def predict(config_path: str = 'config.json'):
+    cfg = load_config(config_path)
+    data = load_data(cfg['dataset_path'])
+    env = build_env(data)
     mac = MultiAgentSystem(
         n_agents=env.num_satellites + env.num_ground_stations,
         n_nodes=env.num_satellites + env.num_ground_stations,
         obs_dim=env.obs_dim,
         action_dim=env.action_dim,
-        hidden_dim=64,
-        device='cpu',
+        hidden_dim=cfg.get('hidden_dim', 64),
+        device=cfg.get('device', 'cpu'),
     )
+    mac.load(cfg.get('model_dir', 'model'))
 
-    # 训练
-    train_cmadr(env, mac, num_episodes=10, gamma=0.98, cost_limits={'energy': 0.5, 'loss': 5}, device='cpu')
-
-    # 预测评估
     loss_rate, energy, avg_delay = evaluate(env, mac)
     print(
         f"Prediction result: loss_rate={loss_rate:.3f}, energy={energy:.3f}, avg_delay={avg_delay:.3f}"
@@ -60,4 +66,4 @@ def train_and_predict(data_path: str):
 
 
 if __name__ == "__main__":
-    train_and_predict('data/prediction_data.json')
+    predict()
