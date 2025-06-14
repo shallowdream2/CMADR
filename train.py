@@ -4,21 +4,21 @@ import os
 from ISTN_ENV import ISTNEnv
 from MASys import MultiAgentSystem
 from LM import train_cmadr
-
+from typing import Union
 
 def load_config(path: str) -> dict:
     with open(path, 'r') as f:
         return json.load(f)
 
 
-def build_env_from_data(data: dict, max_time: int | None = None) -> ISTNEnv:
+def build_env_from_data(data: dict, cfg) -> ISTNEnv:
     return ISTNEnv(
         num_satellites=len(data['sat_positions_per_slot'][0]),
         num_ground_stations=len(data['gs_positions']),
-        max_time=max_time or len(data['sat_positions_per_slot']),
+        max_time=cfg['train']['max_time'] or len(data['sat_positions_per_slot']),
         sat_positions_per_slot=data['sat_positions_per_slot'],
         gs_positions=[tuple(p) for p in data['gs_positions']],
-        queries=data['queries'],
+        queries=data['train_queries'],
     )
 
 
@@ -44,7 +44,8 @@ def main(config_path: str):
         with open(data_path, 'r') as f:
             data = json.load(f)
 
-    env = build_env_from_data(data, train_cfg.get('max_time'))
+
+    env = build_env_from_data(data, cfg)
     mac = MultiAgentSystem(
         n_agents=env.num_satellites + env.num_ground_stations,
         n_nodes=env.num_satellites + env.num_ground_stations,
@@ -54,7 +55,7 @@ def main(config_path: str):
         device=cfg.get('device', 'cpu'),
     )
 
-    model_dir = os.path.join(cfg.get('model_root', 'model'), f"{cfg.get('round',1)}_{data_name}")
+    model_dir = os.path.join(cfg.get('model_root', 'model'), f"round_{cfg['train']['num_episodes']}_{data_name}")
     train_cmadr(
         env,
         mac,

@@ -48,7 +48,7 @@ def predict(config_path: str):
         max_time=cfg.get('predict', {}).get('max_time', len(data['sat_positions_per_slot'])),
         sat_positions_per_slot=data['sat_positions_per_slot'],
         gs_positions=[tuple(p) for p in data['gs_positions']],
-        queries=data['queries'],
+        queries=data['predict_queries'],
     )
     mac = MultiAgentSystem(
         n_agents=env.num_satellites + env.num_ground_stations,
@@ -59,7 +59,7 @@ def predict(config_path: str):
         device=cfg.get('device', 'cpu'),
     )
 
-    model_dir = os.path.join(cfg.get('model_root', 'model'), f"{cfg.get('round',1)}_{data_name}")
+    model_dir = os.path.join(cfg.get('model_root', 'model'), f"{cfg['predict']['model_path']}")
     mac.load(model_dir)
     loss_rate, energy, avg_delay = evaluate(env, mac)
     print(

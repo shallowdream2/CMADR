@@ -1,19 +1,23 @@
 {
   "data_dir": "data",
-  "data_name": "prediction_data",
+  "data_name": "LEO_01",
   "model_root": "model",
   "round": 1,
   "device": "cpu",
+  "num_satellites": 10,
+  "num_ground_stations": 5,
+  "train_seed": 42,
+  "predict_seed": 100,
   "train": {
-    "num_episodes": 10,
+    "num_episodes": 30,
     "gamma": 0.98,
     "cost_limits": {"energy": 0.5, "loss": 5},
-    "num_satellites": 5,
-    "num_ground_stations": 5,
-    "num_queries": 10,
+    "train_queries": 10,
     "max_time": 50
   },
   "predict": {
-    "max_time": 50
+    "model_path": "model/round_30_LEO_01",
+    "max_time": 50,
+    "predict_queries": 10
   }
 }
