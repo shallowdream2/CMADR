@@ -1,0 +1,9 @@
+{
+  "dataset_path": "data/prediction_data.json",
+  "model_dir": "model",
+  "num_episodes": 100,
+  "gamma": 0.98,
+  "cost_limits": {"energy": 0.5, "loss": 5},
+  "hidden_dim": 64,
+  "device": "cpu"
+}

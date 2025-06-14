@@ -49,3 +49,24 @@ class MultiAgentSystem:
         value = self.global_critic(obs_cat)
         # 可输出全局action概率等
         return value
+
+    def save(self, model_dir):
+        import os
+        os.makedirs(model_dir, exist_ok=True)
+        for i, actor in enumerate(self.actors):
+            torch.save(actor.state_dict(), os.path.join(model_dir, f"actor_{i}.pth"))
+        for i, critic in enumerate(self.critics):
+            torch.save(critic.state_dict(), os.path.join(model_dir, f"critic_{i}.pth"))
+        torch.save(self.global_critic.state_dict(), os.path.join(model_dir, "global_critic.pth"))
+
+    def load(self, model_dir):
+        import os
+        for i, actor in enumerate(self.actors):
+            path = os.path.join(model_dir, f"actor_{i}.pth")
+            actor.load_state_dict(torch.load(path, map_location=self.device))
+        for i, critic in enumerate(self.critics):
+            path = os.path.join(model_dir, f"critic_{i}.pth")
+            critic.load_state_dict(torch.load(path, map_location=self.device))
+        gc_path = os.path.join(model_dir, "global_critic.pth")
+        self.global_critic.load_state_dict(torch.load(gc_path, map_location=self.device))
+
