@@ -2,8 +2,20 @@ import numpy as np
 import random
 
 class ISTNEnv:
-    def __init__(self, num_satellites, num_ground_stations, max_buffer=10, max_energy=1.0,
-                 max_time=100, seed=0, sat_positions=None, gs_positions=None, queries=None):
+    def __init__(
+        self,
+        num_satellites,
+        num_ground_stations,
+        max_buffer=10,
+        max_energy=1.0,
+        max_time=100,
+        seed=0,
+        sat_positions=None,
+        gs_positions=None,
+        queries=None,
+        sat_positions_per_slot=None,
+        conn_threshold=30,
+    ):
         """ISTN 环境
 
         当 ``sat_positions`` 或 ``gs_positions`` 提供时，将使用给定的位置数据，否
@@ -18,14 +30,21 @@ class ISTNEnv:
         self.random = random.Random(seed)
         self.n_agents = num_satellites + num_ground_stations
 
-        self.sat_positions = sat_positions or [
-            np.array([random.uniform(0, 100), random.uniform(0, 100)])
-            for _ in range(self.num_satellites)
-        ]
+        self.sat_positions_per_slot = sat_positions_per_slot
+
+        if sat_positions_per_slot is not None:
+            self.sat_positions = [np.array(p) for p in sat_positions_per_slot[0]]
+        else:
+            self.sat_positions = sat_positions or [
+                np.array([random.uniform(0, 100), random.uniform(0, 100)])
+                for _ in range(self.num_satellites)
+            ]
         self.gs_positions = gs_positions or [
             np.array([random.uniform(0, 100), random.uniform(0, 100)])
             for _ in range(self.num_ground_stations)
         ]
+
+        self.conn_threshold = conn_threshold
 
         self.queries = queries or []
         self.query_index = 0
@@ -39,14 +58,29 @@ class ISTNEnv:
         self.reset()
 
     def _build_neighbors(self):
-        neighbors = {}
+        """Build neighbors based on current node positions."""
+        neighbors = {i: set() for i in range(self.n_agents)}
+
+        # satellite-satellite links
         for i in range(self.num_satellites):
-            nbs = [(i-1)%self.num_satellites, (i+1)%self.num_satellites]
-            nbs += [self.num_satellites + j for j in range(self.num_ground_stations)]
-            neighbors[i] = nbs
-        for j in range(self.num_ground_stations):
-            neighbors[self.num_satellites + j] = [i for i in range(self.num_satellites)]
-        return neighbors
+            for j in range(self.num_satellites):
+                if i == j:
+                    continue
+                dist = np.linalg.norm(np.array(self.sat_positions[i]) - np.array(self.sat_positions[j]))
+                if dist <= self.conn_threshold:
+                    neighbors[i].add(j)
+
+        # satellite-ground links
+        for gs in range(self.num_ground_stations):
+            gs_pos = self.gs_positions[gs]
+            for sat in range(self.num_satellites):
+                dist = np.linalg.norm(np.array(self.sat_positions[sat]) - np.array(gs_pos))
+                if dist <= self.conn_threshold:
+                    neighbors[sat].add(self.num_satellites + gs)
+                    neighbors[self.num_satellites + gs].add(sat)
+
+        # convert sets to sorted lists
+        return {k: sorted(list(v)) for k, v in neighbors.items()}
 
     def initialize_satellites(self):
         satellites = {}
@@ -251,6 +285,12 @@ class ISTNEnv:
             rewards += global_bonus / self.n_agents  # 平均分配全局奖励
 
         self.time_slot += 1
+
+        # update satellite positions for next slot if provided
+        if self.sat_positions_per_slot is not None:
+            idx = min(self.time_slot, len(self.sat_positions_per_slot) - 1)
+            self.sat_positions = [np.array(p) for p in self.sat_positions_per_slot[idx]]
+
         done = self.time_slot >= self.max_time
 
         # 每隔3步补充新的包（模拟有流量），若提供 queries 则不再随机生成
@@ -280,6 +320,10 @@ class ISTNEnv:
         self.satellites = self.initialize_satellites()
         self.ground_stations = self.initialize_ground_stations()
         self.time_slot = 0
+
+        if self.sat_positions_per_slot is not None:
+            self.sat_positions = [np.array(p) for p in self.sat_positions_per_slot[0]]
+
         self.neighbors = self._build_neighbors()
         
         # 初始化buffer：若提供查询则全部加入，否则每个地面站生成一个包
