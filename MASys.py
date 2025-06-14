@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from AC import ActorNet, CriticNet  # 假设AC.py中定义了ActorNet和CriticNet
 
 class MultiAgentSystem:
-    def __init__(self, n_agents, obs_dim, action_dim, hidden_dim, device='cpu'):
+    def __init__(self, n_agents, n_nodes,obs_dim, action_dim, hidden_dim, device='cpu'):
         self.n_agents = n_agents
         self.device = device
         # 每个agent自己的actor/critic
@@ -12,21 +12,34 @@ class MultiAgentSystem:
         self.critics = [CriticNet(obs_dim, hidden_dim).to(device) for _ in range(n_agents)]
         # 全局actor/critic
         # self.global_actor = ActorNet(obs_dim * n_agents, hidden_dim, action_dim * n_agents).to(device)
-        self.global_critic = CriticNet(obs_dim * n_agents, hidden_dim).to(device)
+        self.global_critic = CriticNet(obs_dim * n_nodes, hidden_dim).to(device)
         # 优化器（可单独/合并设计）
-        # self.optim_actors = [torch.optim.Adam(actor.parameters(), lr=1e-3) for actor in self.actors]
+        self.optim_actors = [torch.optim.Adam(actor.parameters(), lr=1e-3) for actor in self.actors]
         self.optim_critics = [torch.optim.Adam(critic.parameters(), lr=1e-3) for critic in self.critics]
         # self.optim_global_actor = torch.optim.Adam(self.global_actor.parameters(), lr=1e-3)
         self.optim_global_critic = torch.optim.Adam(self.global_critic.parameters(), lr=1e-3)
 
-    def select_actions(self, obs_n):
+    def select_actions(self, obs_n, neighbors=None):
         # obs_n: [n_agents, obs_dim]，返回每个agent的动作
         actions = []
         for i in range(self.n_agents):
             obs = torch.tensor(obs_n[i], dtype=torch.float32, device=self.device).unsqueeze(0)
             probs = self.actors[i](obs)
-            m = torch.distributions.Categorical(probs)
-            action = m.sample().item()
+            
+            # 修复：根据实际邻居数量限制动作空间
+            if neighbors and i in neighbors:
+                num_neighbors = len(neighbors[i])
+                if num_neighbors > 0:
+                    # 只使用前num_neighbors个动作概率
+                    valid_probs = probs[0][:num_neighbors]
+                    valid_probs = valid_probs / valid_probs.sum()  # 重新归一化
+                    m = torch.distributions.Categorical(valid_probs)
+                    action = m.sample().item()
+                else:
+                    action = 0  # 没有邻居时的默认动作
+            else:
+                m = torch.distributions.Categorical(probs)
+                action = m.sample().item()
             actions.append(action)
         return actions
 
