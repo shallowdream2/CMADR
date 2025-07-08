@@ -47,7 +47,8 @@ def train_cmadr(env, mac, num_episodes=500, gamma=0.98, cost_limits=None, device
         step_count = 0
         while not done:
             # 动态生成当前时隙的拓扑
-            neighbors = env._build_neighbors()
+            # neighbors = env._build_neighbors()
+            neighbors = env.load_neighbors_per_slot(step_count)  # 获取当前时隙的邻居关系
             actions = mac.select_actions(obs,neighbors)
             next_obs, rewards, done, costs, info = env.step(actions, neighbors)
                 

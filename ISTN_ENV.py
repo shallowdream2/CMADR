@@ -15,6 +15,7 @@ class ISTNEnv:
         queries=None,
         sat_positions_per_slot=None,
         conn_threshold=30,
+        neighbors_per_slot=None
     ):
         """ISTN 环境
 
@@ -50,8 +51,8 @@ class ISTNEnv:
         self.queries = sorted(queries or [], key=lambda q: q.get('time', 0))
         self.query_index = 0  # pointer to next query to release
 
-        # 邻接表在每个time slot动态传入
-        self.neighbors = None
+        # 读取邻接表
+        self.neighbors_per_slot = neighbors_per_slot or []
         # 每个agent本地状态维度（自身+邻居+目的地距离）
         max_possible_neighbors = num_satellites + num_ground_stations - 1
         self.obs_dim = 3 + 3 * max_possible_neighbors + 1   # 末尾+1为“到目的地的距离”
@@ -60,7 +61,7 @@ class ISTNEnv:
 
     def _build_neighbors(self):
         """Build neighbors based on current node positions."""
-        neighbors = {i: set() for i in range(self.n_agents)}
+        neighbors = [[] for _ in range(self.n_agents)]
 
         # satellite-satellite links
         for i in range(self.num_satellites):
@@ -69,7 +70,7 @@ class ISTNEnv:
                     continue
                 dist = np.linalg.norm(np.array(self.sat_positions[i]) - np.array(self.sat_positions[j]))
                 if dist <= self.conn_threshold:
-                    neighbors[i].add(j)
+                    neighbors[i].append(j)
 
         # satellite-ground links
         for gs in range(self.num_ground_stations):
@@ -77,11 +78,31 @@ class ISTNEnv:
             for sat in range(self.num_satellites):
                 dist = np.linalg.norm(np.array(self.sat_positions[sat]) - np.array(gs_pos))
                 if dist <= self.conn_threshold:
-                    neighbors[sat].add(self.num_satellites + gs)
-                    neighbors[self.num_satellites + gs].add(sat)
+                    neighbors[sat].append(self.num_satellites + gs)
+                    neighbors[self.num_satellites + gs].append(sat)
 
-        # convert sets to sorted lists
-        return {k: sorted(list(v)) for k, v in neighbors.items()}
+        # sort neighbor lists
+        for i in range(self.n_agents):
+            neighbors[i].sort()
+        
+        return neighbors
+    
+    def load_neighbors_per_slot(self, now_slot):
+        """
+        加载邻接表数据，适用于动态拓扑。
+        :param now_slot: 当前时隙
+        :return: 返回当前时隙的邻居关系列表
+        """
+        if self.neighbors_per_slot and now_slot < len(self.neighbors_per_slot):
+            slot_data = self.neighbors_per_slot[now_slot]
+            if isinstance(slot_data, dict) and 'neighbors' in slot_data:
+                return slot_data['neighbors']
+            else:
+                return slot_data
+        else:
+            # 如果没有预定义的邻居关系，使用动态生成的方法
+            return self._build_neighbors()
+        
 
     def initialize_satellites(self):
         satellites = {}
@@ -146,7 +167,7 @@ class ISTNEnv:
                 own = self.ground_stations[i - self.num_satellites]
             state = [own['energy'], len(own['buffer']), own['latency']]
             # 邻居状态
-            current_neighbors = neighbors.get(i, [])
+            current_neighbors = neighbors[i] if i < len(neighbors) else []
             for j in range(max_possible_neighbors):
                 if j < len(current_neighbors):
                     nb = current_neighbors[j]
@@ -184,13 +205,16 @@ class ISTNEnv:
         transit_packets = []
         rewards = np.zeros(self.n_agents)
         
-        # 调试：检查地面站buffer
-        # if self.time_slot < 3:
-        #     #print(f"    Ground stations buffer status:")
-        #     for i in range(self.num_ground_stations):
-        #         gs_agent_id = self.num_satellites + i  # 地面站的agent ID
-        #         buffer_size = len(self.ground_stations[i]['buffer'])
-        #         print(f"      GS {i} (Agent {gs_agent_id}): {buffer_size} packets")
+        # 奖励设计参数
+        DELIVERY_REWARD = 10.0          # 成功交付基础奖励
+        FORWARD_REWARD = 0.2            # 转发基础奖励
+        DROP_PENALTY = -5.0             # 丢包惩罚
+        INVALID_ACTION_PENALTY = -0.5   # 无效动作惩罚
+        IDLE_PENALTY = -0.1             # 空闲惩罚
+        ENERGY_COST_WEIGHT = 2.0        # 能耗权重
+        DISTANCE_REWARD_WEIGHT = 0.1    # 距离奖励权重
+        DELAY_PENALTY_WEIGHT = 0.05     # 时延惩罚权重
+        
         
         # 转发
         for idx, action in enumerate(actions):
@@ -205,32 +229,23 @@ class ISTNEnv:
                     node_type = f"GS{gs_idx}"
                 else:
                     print(f"Error: Invalid agent index {idx}")
-                    rewards[idx] -= 0.1
+                    rewards[idx] += INVALID_ACTION_PENALTY
                     continue
-
-            # if self.time_slot < 3:
-            #     buffer_size = len(node['buffer'])
-            #     print(f"      Agent {idx}({node_type}): buffer_size={buffer_size}")
 
             if node['buffer']:
                 pkt = node['buffer'][0]
                 dst_gs = pkt['dst']
                 
-                # if self.time_slot < 3:
-                #     print(f"        Found packet with dst={dst_gs}")
-                
+               
                 # 检查动作有效性
-                current_neighbors = neighbors.get(idx, [])
+                current_neighbors = neighbors[idx] if idx < len(neighbors) else []
                 if action >= len(current_neighbors):
                     # if self.time_slot < 3:
                     #     print(f"        Invalid action: {action} >= {len(current_neighbors)}")
-                    rewards[idx] -= 0.1
+                    rewards[idx] += INVALID_ACTION_PENALTY
                     continue
                     
                 target = current_neighbors[action]
-                
-                # if self.time_slot < 3:
-                #     print(f"        Trying to forward to target={target}")
                 
                 # 确定目标节点
                 if target < self.num_satellites:
@@ -242,9 +257,7 @@ class ISTNEnv:
                         tgt_node = self.ground_stations[tgt_gs_idx]
                         tgt_type = f"GS{tgt_gs_idx}"
                     else:
-                        # if self.time_slot < 3:
-                        #     print(f"        Invalid target GS index: {tgt_gs_idx}")
-                        rewards[idx] -= 0.1
+                        rewards[idx] += INVALID_ACTION_PENALTY
                         continue
                     
                 # 缓冲是否满
@@ -258,43 +271,79 @@ class ISTNEnv:
                     # if self.time_slot < 3:
                     #     print(f"        SUCCESS! Forwarded from {node_type} to {tgt_type}")
                     
+                    # 计算距离奖励（朝向目的地的移动给予奖励）
+                    current_pos = self.sat_positions[idx] if idx < self.num_satellites else self.gs_positions[idx - self.num_satellites]
+                    target_pos = self.sat_positions[target] if target < self.num_satellites else self.gs_positions[target - self.num_satellites]
+                    dst_pos = self.gs_positions[dst_gs]
+                    
+                    # 计算当前节点和目标节点到目的地的距离
+                    current_to_dst = np.linalg.norm(np.array(current_pos) - np.array(dst_pos))
+                    target_to_dst = np.linalg.norm(np.array(target_pos) - np.array(dst_pos))
+                    
+                    # 如果转发使包更接近目的地，给予距离奖励
+                    distance_improvement = current_to_dst - target_to_dst
+                    distance_reward = distance_improvement * DISTANCE_REWARD_WEIGHT
+                    
+                    # 计算时延惩罚
+                    packet_age = self.time_slot - pkt['start_time']
+                    delay_penalty = packet_age * DELAY_PENALTY_WEIGHT
+                    
                     # 若目标是地面站且正好为目的地，则交付
                     if (target >= self.num_satellites) and ((target - self.num_satellites) == dst_gs):
                         delivered_packets.append(pkt)
                         tgt_node['buffer'].pop()  # 交付出队
-                        rewards[idx] += 5.0  # 成功交付大奖励
+                        
+                        # 交付奖励：基础奖励 + 距离奖励 - 时延惩罚 - 跳数惩罚
+                        hop_penalty = pkt['hop'] * 0.1  # 跳数惩罚
+                        delivery_reward = DELIVERY_REWARD + distance_reward - delay_penalty - hop_penalty
+                        rewards[idx] += delivery_reward
+                        
                         # if self.time_slot < 3:
                         #     print(f"        DELIVERED! Packet reached destination GS{dst_gs}")
                     else:
-                        # 基础转发奖励
-                        rewards[idx] += 0.1
+                        # 转发奖励：基础转发奖励 + 距离奖励 - 小幅时延惩罚
+                        forward_reward = FORWARD_REWARD + distance_reward - delay_penalty * 0.1
+                        rewards[idx] += forward_reward
                         transit_packets.append(pkt)
                             
-                    # 能耗
-                    node['energy'] -= 0.01
-                    cost_energy[idx] += 0.01
+                    # 能耗惩罚
+                    energy_cost = 0.01
+                    node['energy'] -= energy_cost
+                    cost_energy[idx] += energy_cost
+                    rewards[idx] -= energy_cost * ENERGY_COST_WEIGHT
                     
                     # if self.time_slot < 3:
                     #     print(f"        Energy cost: {cost_energy[idx]:.3f}")
                 else:
-                    # 丢包
-                    node['buffer'].pop(0)
+                    # 丢包：严重惩罚 + 时延惩罚
+                    dropped_pkt = node['buffer'].pop(0)
                     cost_loss += 1
-                    rewards[idx] -= 2.0  # 丢包惩罚
+                    packet_age = self.time_slot - dropped_pkt['start_time']
+                    drop_penalty = DROP_PENALTY - packet_age * DELAY_PENALTY_WEIGHT
+                    rewards[idx] += drop_penalty
                     # if self.time_slot < 3:
                     #     print(f"        DROPPED! Target buffer full")
                     
             else:
                 # 没有包可转发，小惩罚
-                rewards[idx] -= 0.05
+                rewards[idx] += IDLE_PENALTY
                 # if self.time_slot < 3 and idx >= self.num_satellites:
                 #     print(f"        {node_type}: No packets to forward, penalty -0.05")
 
-        # 其余代码保持不变...
-        # 添加全局奖励成分，但不要完全覆盖个体奖励
+        # 计算系统级奖励
+        system_reward = 0
         if delivered_packets:
-            global_bonus = len(delivered_packets) * 2.0
-            rewards += global_bonus / self.n_agents  # 平均分配全局奖励
+            # 交付效率奖励
+            delivery_efficiency = len(delivered_packets) / max(1, len(delivered_packets) + cost_loss)
+            system_reward += delivery_efficiency * 1.0
+            
+            # 平均时延奖励（时延越短奖励越高）
+            avg_delay = np.mean([self.time_slot - pkt['start_time'] for pkt in delivered_packets])
+            delay_reward = max(0, (10 - avg_delay) * 0.1)  # 假设理想时延为10步以内
+            system_reward += delay_reward
+        
+        # 将系统级奖励分配给所有agent
+        rewards += system_reward / self.n_agents
 
         self.time_slot += 1
 

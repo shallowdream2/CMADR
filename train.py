@@ -12,6 +12,7 @@ def load_config(path: str) -> dict:
 
 
 def build_env_from_data(data: dict, cfg) -> ISTNEnv:
+
     return ISTNEnv(
         num_satellites=len(data['sat_positions_per_slot'][0]),
         num_ground_stations=len(data['gs_positions']),
@@ -19,6 +20,7 @@ def build_env_from_data(data: dict, cfg) -> ISTNEnv:
         sat_positions_per_slot=data['sat_positions_per_slot'],
         gs_positions=[tuple(p) for p in data['gs_positions']],
         queries=data['train_queries'],
+        neighbors_per_slot=data.get('neighbors_per_slot', [])
     )
 
 
@@ -43,6 +45,22 @@ def main(config_path: str):
     else:
         with open(data_path, 'r') as f:
             data = json.load(f)
+    
+    # 检查是否存在邻居关系数据，如果没有则生成
+    if 'neighbors_per_slot' not in data:
+        print("数据文件中未找到邻居关系，正在生成...")
+        from generate_neighbors import add_neighbors_to_data
+        add_neighbors_to_data(
+            data_path,
+            sat_distance_threshold=train_cfg.get('sat_threshold', 2000.0),
+            gs_distance_threshold=train_cfg.get('gs_threshold', 700.0),
+            max_sat_neighbors=train_cfg.get('max_neighbors', 4),
+            use_haversine=train_cfg.get('use_haversine', True)
+        )
+        # 重新加载数据
+        with open(data_path, 'r') as f:
+            data = json.load(f)
+        print("邻居关系生成完成")
 
 
     env = build_env_from_data(data, cfg)

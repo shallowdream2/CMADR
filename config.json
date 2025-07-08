@@ -1,9 +1,9 @@
 {
   "data_dir": "data",
-  "data_name": "LEO_01",
+  "data_name": "LEO_02",
   "model_root": "model",
   "round": 1,
-  "device": "cpu",
+  "device": "cuda",
   "num_satellites": 10,
   "num_ground_stations": 5,
   "train_seed": 42,
@@ -11,7 +11,7 @@
   "train": {
     "num_episodes": 30,
     "gamma": 0.98,
-    "cost_limits": {"energy": 0.5, "loss": 5},
+    "cost_limits": {"energy": 100, "loss": 500},
     "train_queries": 10,
     "max_time": 50
   },

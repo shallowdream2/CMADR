@@ -59,8 +59,8 @@ def predict(config_path: str):
         device=cfg.get('device', 'cpu'),
     )
 
-    model_dir = os.path.join(cfg.get('model_root', 'model'), f"{cfg['predict']['model_path']}")
-    mac.load(model_dir)
+    model_path = cfg.get('predict', {}).get('model_path', 'model/round_30_LEO_01')
+    mac.load(model_path)
     loss_rate, energy, avg_delay = evaluate(env, mac)
     print(
         f"Prediction result: loss_rate={loss_rate:.3f}, energy={energy:.3f}, avg_delay={avg_delay:.3f}"
